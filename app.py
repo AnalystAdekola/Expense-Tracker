@@ -88,7 +88,7 @@ else:
         with tab1:
             with st.form("expense_form", clear_on_submit=True):
                 req_date = st.date_input("Date of Request", date.today())
-                amount = st.number_input("Amount Requested (₦)", min_value=0.0, format="%.2f")
+                amount = st.number_input("Amount Requested (₦)", min_value=0.0, format="%.2f", key="user_amount_input")
                 amount_word = st.text_input("Amount in Words")
                 
                 col1, col2, col3 = st.columns(3)
@@ -177,4 +177,5 @@ else:
             st.dataframe(my_tasks, use_container_width=True)
             
         else:
+
             st.info("No requests currently assigned to you.")
