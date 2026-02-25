@@ -76,6 +76,7 @@ else:
     # LOGOUT
     if st.sidebar.button("LOGOUT"):
         st.session_state.logged_in = False
+        st.session_state.user_info = {}
         st.rerun()
 
     # --- USER INTERFACE ---
@@ -86,96 +87,108 @@ else:
         tab1, tab2 = st.tabs(["New Request", "Request History"])
         
         with tab1:
-            with st.form("expense_form", clear_on_submit=True):
-                req_date = st.date_input("Date of Request", date.today())
-                amount = st.number_input("Amount Requested (₦)", min_value=0.0, format="%.2f", key="user_amount_input")
-                amount_word = st.text_input("Amount in Words")
+            # Removed clear_on_submit=True to prevent premature resetting of fields
+            with st.form("expense_form", clear_on_submit=False):
+                req_date = st.date_input("Date of Request", date.today(), key="req_date")
+                
+                # Using unique keys ensures Streamlit preserves the value during reruns
+                amount = st.number_input("Amount Requested (₦)", min_value=0.0, format="%.2f", key="amount_input")
+                amount_word = st.text_input("Amount in Words", key="amount_word_input")
                 
                 col1, col2, col3 = st.columns(3)
-                b_name = col1.text_input("Beneficiary Name")
-                b_bank = col2.text_input("Beneficiary Bank")
-                b_acc = col3.text_input("Account No.")
+                b_name = col1.text_input("Beneficiary Name", key="b_name")
+                b_bank = col2.text_input("Beneficiary Bank", key="b_bank")
+                b_acc = col3.text_input("Account No.", key="b_acc")
                 
-                reason = st.text_area("Reason for Payment")
-                receipt = st.file_uploader("Upload Invoice/Receipt (Image/PDF)", type=['png', 'jpg', 'pdf'])
-                approver = st.selectbox("Select Approval", admin_users)
+                reason = st.text_area("Reason for Payment", key="reason")
+                receipt = st.file_uploader("Upload Invoice/Receipt (Image/PDF)", type=['png', 'jpg', 'pdf'], key="receipt")
+                approver = st.selectbox("Select Approval", admin_users, key="approver")
                 
                 submit_req = st.form_submit_button("SUBMIT REQUEST")
                 
                 if submit_req:
                     if amount > 0 and b_name and b_acc:
-                        new_data = pd.DataFrame([{
-                            "Request Date": str(req_date),
-                            "Staff Name": st.session_state.user_info['name'],
-                            "Email": st.session_state.user_info['email'],
-                            "Amount": amount,
-                            "Amount in Words": amount_word,
-                            "Beneficiary Name": b_name,
-                            "Beneficiary Bank": b_bank,
-                            "Account No": b_acc,
-                            "Reason": reason,
-                            "Receipt Link": receipt.name if receipt else "No File",
-                            "Approver Name": approver,
-                            "Status": "Pending",
-                            "Admin Comment": ""
-                        }])
-                        old_df = conn.read(worksheet="Expense Tracker", ttl=0)
-                        updated_df = pd.concat([old_df, new_data], ignore_index=True)
-                        conn.update(worksheet="Expense Tracker", data=updated_df)
-                        st.success("Request Submitted Successfully!")
-                        st.balloons()
+                        try:
+                            new_data = pd.DataFrame([{
+                                "Request Date": str(req_date),
+                                "Staff Name": st.session_state.user_info['name'],
+                                "Email": st.session_state.user_info['email'],
+                                "Amount": amount,
+                                "Amount in Words": amount_word,
+                                "Beneficiary Name": b_name,
+                                "Beneficiary Bank": b_bank,
+                                "Account No": b_acc,
+                                "Reason": reason,
+                                "Receipt Link": receipt.name if receipt else "No File",
+                                "Approver Name": approver,
+                                "Status": "Pending",
+                                "Admin Comment": ""
+                            }])
+                            old_df = conn.read(worksheet="Expense Tracker", ttl=0)
+                            updated_df = pd.concat([old_df, new_data], ignore_index=True)
+                            conn.update(worksheet="Expense Tracker", data=updated_df)
+                            st.success("Request Submitted Successfully!")
+                            st.balloons()
+                            # Optional: st.rerun() here if you want to clear the form after success
+                        except Exception as e:
+                            st.error(f"Error connecting to Google Sheets: {e}")
                     else:
-                        st.error("Please fill in all required fields.")
+                        st.error("Please fill in all required fields (Amount, Beneficiary, and Account No).")
 
         with tab2:
             st.subheader("Your Transaction History")
-            history_df = conn.read(worksheet="Expense Tracker", ttl=0)
-            my_history = history_df[history_df['Email'] == st.session_state.user_info['email']]
-            if not my_history.empty:
-                st.dataframe(my_history[::-1], use_container_width=True)
-            else:
-                st.info("No history found.")
+            try:
+                history_df = conn.read(worksheet="Expense Tracker", ttl=0)
+                my_history = history_df[history_df['Email'] == st.session_state.user_info['email']]
+                if not my_history.empty:
+                    st.dataframe(my_history[::-1], use_container_width=True)
+                else:
+                    st.info("No history found.")
+            except:
+                st.warning("Could not load history. Please check your Spreadsheet connection.")
 
     # --- ADMIN INTERFACE ---
     elif st.session_state.role == "Admin":
         admin_name = st.session_state.user_info['name']
         st.title(f"Admin Dashboard: {admin_name}")
         
-        all_requests = conn.read(worksheet="Expense Tracker", ttl=0)
-        # Filter: Only see requests where THIS admin was selected as the approver
-        my_tasks = all_requests[all_requests['Approver Name'] == admin_name]
-        
-        if not my_tasks.empty:
-            pending_tasks = my_tasks[my_tasks['Status'] == "Pending"]
+        try:
+            all_requests = conn.read(worksheet="Expense Tracker", ttl=0)
+            # Filter: Only see requests where THIS admin was selected as the approver
+            my_tasks = all_requests[all_requests['Approver Name'] == admin_name]
             
-            st.subheader("Pending Approvals")
-            if not pending_tasks.empty:
-                for idx, row in pending_tasks.iterrows():
-                    with st.expander(f"Request from {row['Staff Name']} - ₦{row['Amount']}"):
-                        st.write(f"**Reason:** {row['Reason']}")
-                        st.write(f"**Bank:** {row['Beneficiary Bank']} | **Acc:** {row['Account No']}")
-                        
-                        comment = st.text_input("Admin Comment", key=f"comm_{idx}")
-                        col_a, col_b = st.columns(2)
-                        
-                        if col_a.button("✅ Approve", key=f"app_{idx}"):
-                            all_requests.at[idx, 'Status'] = "Approved"
-                            all_requests.at[idx, 'Admin Comment'] = comment
-                            conn.update(worksheet="Expense Tracker", data=all_requests)
-                            st.success("Approved!")
-                            st.rerun()
+            if not my_tasks.empty:
+                pending_tasks = my_tasks[my_tasks['Status'] == "Pending"]
+                
+                st.subheader("Pending Approvals")
+                if not pending_tasks.empty:
+                    for idx, row in pending_tasks.iterrows():
+                        with st.expander(f"Request from {row['Staff Name']} - ₦{row['Amount']}"):
+                            st.write(f"**Reason:** {row['Reason']}")
+                            st.write(f"**Bank:** {row['Beneficiary Bank']} | **Acc:** {row['Account No']}")
                             
-                        if col_b.button("❌ Decline", key=f"dec_{idx}"):
-                            all_requests.at[idx, 'Status'] = "Declined"
-                            all_requests.at[idx, 'Admin Comment'] = comment
-                            conn.update(worksheet="Expense Tracker", data=all_requests)
-                            st.error("Declined!")
-                            st.rerun()
-            
-            st.write("---")
-            st.subheader("All My Processed Requests")
-            st.dataframe(my_tasks, use_container_width=True)
-            
-        else:
-
-            st.info("No requests currently assigned to you.")
+                            comment = st.text_input("Admin Comment", key=f"comm_{idx}")
+                            col_a, col_b = st.columns(2)
+                            
+                            if col_a.button("✅ Approve", key=f"app_{idx}"):
+                                all_requests.at[idx, 'Status'] = "Approved"
+                                all_requests.at[idx, 'Admin Comment'] = comment
+                                conn.update(worksheet="Expense Tracker", data=all_requests)
+                                st.success("Approved!")
+                                st.rerun()
+                                
+                            if col_b.button("❌ Decline", key=f"dec_{idx}"):
+                                all_requests.at[idx, 'Status'] = "Declined"
+                                all_requests.at[idx, 'Admin Comment'] = comment
+                                conn.update(worksheet="Expense Tracker", data=all_requests)
+                                st.error("Declined!")
+                                st.rerun()
+                
+                st.write("---")
+                st.subheader("All My Processed Requests")
+                st.dataframe(my_tasks[::-1], use_container_width=True)
+                
+            else:
+                st.info("No requests currently assigned to you.")
+        except:
+            st.error("Error accessing Spreadsheet. Check Secrets or Tab Name.")
